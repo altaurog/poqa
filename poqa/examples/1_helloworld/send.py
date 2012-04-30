@@ -1,5 +1,4 @@
-import sys
-from . import client
+from poqa import client
 
 class HelloClient(client.AsyncClient):
     hello = client.Queue()
@@ -11,6 +10,6 @@ class HelloClient(client.AsyncClient):
 
 if __name__ == '__main__':
     c = HelloClient()
-    c.send_message(sys.argv[1])
+    c.send_message('Hello world')
     c.start()
 
