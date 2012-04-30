@@ -66,12 +66,13 @@ class Queue(Declaration):
         else:
             return decorator
 
-    def basic_publish(self, body, **kwargs):
+    def basic_publish(self, body, serializer=None, **kwargs):
         channel = self.client.channel
         exchange = ''
         routing_key = self.queue_name
+        if serializer:
+            body = serializer.serialize(body, kwargs)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
-
 
 class Exchange(Declaration):
     def __init__(self, **kwargs):
@@ -94,10 +95,12 @@ class Exchange(Declaration):
         self.exchange_name = self.name
         self.callback()
 
-    def basic_publish(self, body, **kwargs):
+    def basic_publish(self, body, serializer=None, **kwargs):
         channel = self.client.channel
         exchange = self.exchange_name
         routing_key = kwargs.pop('routing_key', '')
+        if serializer:
+            body = serializer.serialize(body, kwargs)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
 
 class Consumer(Declaration):
@@ -109,27 +112,30 @@ class Consumer(Declaration):
         return self
 
 class BasicConsumer(Consumer):
+    def __init__(self, **kwargs):
+        self.serializer = kwargs.pop('serializer', None)
+        self.auto_ack = kwargs.pop('auto_ack', False)
+        if self.auto_ack:
+            if kwargs.get('no_ack', False):
+                msg = "A consumer may not have both auto_ack and no_ack set."
+                raise ValueError(msg)
+        super(BasicConsumer, self).__init__(**kwargs)
+
     def declare(self, channel):
         queue = self.kwargs.setdefault('queue', '')
         if isinstance(queue, Queue):
             queue = self.kwargs['queue'] = queue.queue_name
         print "declaring consumer %r on queue %r" % (self.name, queue)
-        if self.kwargs.get('auto_ack', False):
-            if self.kwargs.get('no_ack', False):
-                msg = "A consumer may not have both auto_ack and no_ack set."
-                raise ValueError(msg)
-            def handler(channel, method, props, body):
-                try:
-                    self.handler(channel, method, props, body)
-                except Exception, e:
-                    print e
-                else:
-                    channel.basic_ack(delivery_tag = method.delivery_tag)
-        else:
+        def handler(channel, method, props, body):
+            if self.serializer:
+                body = self.serializer.deserialize(props, body)
             try:
-                handler = self.handler
+                self.handler(channel, method, props, body)
             except Exception, e:
                 print e
+            else:
+                if self.auto_ack:
+                    channel.basic_ack(delivery_tag=method.delivery_tag)
         channel.basic_consume(handler, **self.kwargs)
 
 class Task(object):
