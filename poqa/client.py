@@ -79,6 +79,10 @@ class AsyncClient(object):
         self._start_tasks()
 
     def _start_tasks(self):
+        # if there's a run function which isn't already a task, queue it
+        run = getattr(self.__class__, 'run', None)
+        if callable(run):
+            self.add_timeout(0, self.run)
         for deadline, handler in getattr(self, '_pending_timeouts', []):
             self.connection.add_timeout(deadline, handler)
 
