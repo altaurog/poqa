@@ -8,6 +8,7 @@ import weakref
 
 from pika.adapters import SelectConnection
 from pika.connection import ConnectionParameters
+from pika.spec import BasicProperties as Properties
 
 from .declarations import *
 
