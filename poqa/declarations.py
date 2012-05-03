@@ -1,6 +1,8 @@
 import copy
 import functools
 
+from pika import spec
+
 class Declaration(object):
     "Base class for declarative style"
 
@@ -66,11 +68,13 @@ class Queue(Declaration):
         else:
             return decorator
 
-    def basic_publish(self, body, serializer=None, **kwargs):
+    def basic_publish(self, body, serializer=None, properties=None, **kwargs):
         channel = self.client.channel
         exchange = ''
         routing_key = self.queue_name
         if serializer:
+            if properties is None:
+                properties = spec.BasicProperties()
             body = serializer.serialize(body, kwargs)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
 
@@ -95,11 +99,13 @@ class Exchange(Declaration):
         self.exchange_name = self.name
         self.callback()
 
-    def basic_publish(self, body, serializer=None, **kwargs):
+    def basic_publish(self, body, routing_key='', serializer=None,
+                                   properties=None, **kwargs):
         channel = self.client.channel
         exchange = self.exchange_name
-        routing_key = kwargs.pop('routing_key', '')
         if serializer:
+            if properties is None:
+                properties = spec.BasicProperties()
             body = serializer.serialize(body, kwargs)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
 
