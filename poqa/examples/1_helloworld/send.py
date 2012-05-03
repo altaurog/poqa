@@ -1,15 +1,18 @@
 from poqa import client
+from poqa.serializers.yaml import YamlSerializer
 
 class HelloClient(client.AsyncClient):
     hello = client.Queue()
+    next_id = 0
 
-    @client.task
-    def send_message(self, message):
-        self.hello.basic_publish(message)
+    @hello.basic_publisher
+    def run(self):
+        yield ['hello world', 2]
         exit()
 
+    run.serializer = YamlSerializer
+    run.properties = client.Properties(delivery_mode=2)
+
 if __name__ == '__main__':
-    c = HelloClient()
-    c.send_message('Hello world')
-    c.start()
+    HelloClient().start()
 
