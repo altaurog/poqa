@@ -75,7 +75,7 @@ class Queue(Declaration):
         if serializer:
             if properties is None:
                 properties = spec.BasicProperties()
-            body = serializer.serialize(body, kwargs)
+            body = serializer.serialize(body, properties)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
 
 class Exchange(Declaration):
@@ -106,7 +106,7 @@ class Exchange(Declaration):
         if serializer:
             if properties is None:
                 properties = spec.BasicProperties()
-            body = serializer.serialize(body, kwargs)
+            body = serializer.serialize(body, properties)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
 
 class Consumer(Declaration):

@@ -1,4 +1,3 @@
-from pika import spec
 
 class SerializationError(Exception):
     "Unable to serialize a value"
@@ -6,14 +5,10 @@ class SerializationError(Exception):
 class SerializerBase(object):
     "Base class for serializers"
 
-    def serialize(self, body, kwargs):
+    def serialize(self, body, properties):
         body = self.dumps(body)
-        props = kwargs.pop('properties', None)
-        if props is None:
-            props = spec.BasicProperties()
-        props.content_type = self.content_type
-        props.content_encoding = self.content_encoding
-        kwargs['properties'] = props
+        properties.content_type = self.content_type
+        properties.content_encoding = self.content_encoding
         return body
 
     def deserialize(self, props, body):
@@ -21,3 +16,4 @@ class SerializerBase(object):
             return self.loads(body)
         else:
             return body
+
