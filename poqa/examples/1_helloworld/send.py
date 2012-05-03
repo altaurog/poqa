@@ -14,5 +14,6 @@ class HelloClient(client.AsyncClient):
     run.properties = client.Properties(delivery_mode=2)
 
 if __name__ == '__main__':
-    HelloClient().start()
+    c = HelloClient()
+    c.start()
 

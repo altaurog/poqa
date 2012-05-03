@@ -135,9 +135,9 @@ class Decorator(Declaration):
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
-    def __call__(self, handler):
-        self._decorated_func = handler
-        return functools.wraps(handler, updated=())(self)
+    def __call__(self, func):
+        self._decorated_func = func
+        return functools.wraps(func, updated=())(self)
 
     def on_class_create(self, cls):
         pass
