@@ -150,6 +150,9 @@ class BasicConsumer(Decorator):
                     channel.basic_ack(delivery_tag=method.delivery_tag)
         channel.basic_consume(handler, **self.kwargs)
 
+    def add_serializer(self, serializer):
+        self.serializers.append(serializer)
+
 class Task(object):
     error_msg = "Specifying both timeout and interval for task is not allowed"
     def __init__(self, func, timeout=None, interval=None, **kwargs):
