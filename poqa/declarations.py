@@ -252,16 +252,13 @@ class BasicPublisher(Decorator):
         return func
 
 class Task(object):
-    error_msg = "Specifying both timeout and interval for task is not allowed"
     def __init__(self, func, timeout=None, interval=None, **kwargs):
         self._decorated_func = func
         self.kwargs = kwargs
         self.timeout = timeout
         self.interval = interval
-        if interval is not None and timeout is not None:
-            raise ValueError(self.error_msg)
-        elif interval is None and timeout is None:
-            self.timeout = 0
+        if timeout is None:
+            self.timeout = interval or 0
 
     def __get__(self, instance, cls):
         @functools.wraps(self._decorated_func)
@@ -270,9 +267,7 @@ class Task(object):
             kwargs_.update(kwargs)
             timeout = kwargs_.pop('timeout', self.timeout)
             interval = kwargs_.pop('interval', self.interval)
-            if interval is not None and timeout is not None:
-                raise ValueError(self.error_msg)
-            if timeout is not None:
+            if interval is None:
                 def task_func():
                     self._decorated_func(client, *args, **kwargs_)
                 client.add_timeout(timeout, task_func)
@@ -280,7 +275,7 @@ class Task(object):
                 def task_func():
                     self._decorated_func(client, *args, **kwargs_)
                     client.add_timeout(interval, task_func)
-                client.add_timeout(interval, task_func)
+                client.add_timeout(timeout, task_func)
         return schedule.__get__(instance, cls)
 
 def task(func=None, **kwargs):
