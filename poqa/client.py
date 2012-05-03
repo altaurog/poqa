@@ -43,9 +43,10 @@ class ClientMeta(type):
                 cls._exchanges.append(value)
             elif isinstance(value, Queue):
                 cls._queues.append(value)
-            elif isinstance(value, Consumer):
+            elif isinstance(value, BasicConsumer):
                 cls._consumers.append(value)
-                setattr(cls, name, value.handler)
+        if isinstance(value, Decorator):
+            value.contribute_to_class(cls)
 
 class AsyncClient(object):
     __metaclass__ = ClientMeta
@@ -74,7 +75,7 @@ class AsyncClient(object):
 
     def _declare_consumers(self):
         for c in self._consumers:
-            c.handler = getattr(self, c.name)
+            c._decorated_func = getattr(self, c.name)
             c.declare(self.channel)
         self._start_tasks()
 

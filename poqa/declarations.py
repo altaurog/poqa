@@ -3,6 +3,8 @@ import functools
 
 from pika import spec
 
+from .serializers import Serializers, SerializerBase
+
 class Declaration(object):
     "Base class for declarative style"
 
@@ -109,18 +111,22 @@ class Exchange(Declaration):
             body = serializer.serialize(body, properties)
         channel.basic_publish(exchange, routing_key, body, **kwargs)
 
-class Consumer(Declaration):
+
+class Decorator(Declaration):
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
     def __call__(self, handler):
-        self.handler = handler
-        return self
+        self._decorated_func = handler
+        return functools.wraps(handler, updated=())(self)
 
-class BasicConsumer(Consumer):
-    def __init__(self, **kwargs):
-        self.serializer = kwargs.pop('serializer', None)
-        self.auto_ack = kwargs.pop('auto_ack', False)
+    def contribute_to_class(self, cls):
+        setattr(cls, self.name, self._decorated_func)
+
+class BasicConsumer(Decorator):
+    def __init__(self, serializers=None, auto_ack=False, **kwargs):
+        self.serializers = serializers or Serializers()
+        self.auto_ack = auto_ack
         if self.auto_ack:
             if kwargs.get('no_ack', False):
                 msg = "A consumer may not have both auto_ack and no_ack set."
@@ -133,10 +139,10 @@ class BasicConsumer(Consumer):
             queue = self.kwargs['queue'] = queue.queue_name
         print "declaring consumer %r on queue %r" % (self.name, queue)
         def handler(channel, method, props, body):
-            if self.serializer:
-                body = self.serializer.deserialize(props, body)
+            if self.serializers:
+                body = self.serializers.deserialize(props, body)
             try:
-                self.handler(channel, method, props, body)
+                self._decorated_func(channel, method, props, body)
             except Exception, e:
                 print e
             else:
