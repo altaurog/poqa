@@ -1,5 +1,6 @@
 import copy
 import functools
+import types
 
 from pika import spec
 
@@ -70,6 +71,15 @@ class Queue(Declaration):
         else:
             return decorator
 
+    def basic_publisher(self, publisher_func=None, **kwargs):
+        is_empty_kwargs = not len(kwargs)
+        kwargs['routing_key'] = self
+        decorator = BasicPublisher(**kwargs)
+        if callable(publisher_func) and is_empty_kwargs:
+            return decorator(publisher_func)
+        else:
+            return decorator
+
     def basic_publish(self, body, serializer=None, properties=None, **kwargs):
         channel = self.client.channel
         exchange = ''
@@ -100,6 +110,15 @@ class Exchange(Declaration):
             raise RuntimeError('failed to declare exchange: %r' % self.name)
         self.exchange_name = self.name
         self.callback()
+
+    def basic_publisher(self, publisher_func=None, **kwargs):
+        is_empty_kwargs = not len(kwargs)
+        kwargs['exchange'] = self
+        decorator = BasicPublisher(**kwargs)
+        if callable(publisher_func) and is_empty_kwargs:
+            return decorator(publisher_func)
+        else:
+            return decorator
 
     def basic_publish(self, body, routing_key='', serializer=None,
                                    properties=None, **kwargs):
@@ -152,6 +171,70 @@ class BasicConsumer(Decorator):
 
     def add_serializer(self, serializer):
         self.serializers.append(serializer)
+
+class BasicPublisher(Decorator):
+    def __init__(self, exchange='', routing_key='', serializer=None, properties=None, **kwargs):
+        self.args = {'exchange': exchange,
+                     'routing_key': routing_key,
+                     'serializer': serializer,
+                     'properties': properties}
+        self.kwargs = kwargs
+
+    def contribute_to_class(self, cls):
+        func = self._decorated_func
+        for key, value in self.args.iteritems():
+            self.__dict__.setdefault(key, value)
+        if isinstance(self.serializer, type):
+            self.serializer = self.serializer()
+
+        @functools.wraps(func)
+        def publish_wrapper(client, *args, **kwargs):
+            result = func(client, *args, **kwargs)
+            if not isinstance(result, types.GeneratorType):
+                result = (result,)
+            for message in result:
+                self.publish(client, message)
+        setattr(cls, self.name, publish_wrapper)
+
+    def publish(self, client, message):
+        exchange = self.exchange
+        if callable(exchange):
+            exchange = exchange(client, message)
+        if isinstance(exchange, Exchange):
+            exchange = exchange.exchange_name
+
+        routing_key = self.routing_key
+        if callable(routing_key):
+            routing_key = routing_key(client, message)
+        if isinstance(routing_key, Queue):
+            routing_key = routing_key.queue_name
+
+        properties = self.properties
+        if callable(properties):
+            properties = properties(client, message)
+        if properties is None:
+            properties = spec.BasicProperties()
+
+        if self.serializer:
+            message = self.serializer.serialize(message, properties)
+        client.channel.basic_publish(exchange, routing_key, message, properties, **self.kwargs)
+
+    # decorators
+    def serializer(self, obj):
+        self.serializer = obj
+        return obj
+
+    def properties(self, func):
+        self.properties = func
+        return func
+
+    def exchange(self, func):
+        self.exchange = func
+        return func
+
+    def routing_key(self, func):
+        self.routing_key = func
+        return func
 
 class Task(object):
     error_msg = "Specifying both timeout and interval for task is not allowed"
