@@ -46,7 +46,7 @@ class ClientMeta(type):
             elif isinstance(value, BasicConsumer):
                 cls._consumers.append(value)
         if isinstance(value, Decorator):
-            value.contribute_to_class(cls)
+            value.on_class_create(cls)
 
 class AsyncClient(object):
     __metaclass__ = ClientMeta
@@ -75,7 +75,7 @@ class AsyncClient(object):
 
     def _declare_consumers(self):
         for c in self._consumers:
-            c._decorated_func = getattr(self, c.name)
+            c.client = weakref.proxy(self)
             c.declare(self.channel)
         self._start_tasks()
 

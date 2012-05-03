@@ -4,7 +4,7 @@ import types
 
 from pika import spec
 
-from .serializers import Serializers, SerializerBase
+from .serializers import Serializers
 
 class Declaration(object):
     "Base class for declarative style"
@@ -139,11 +139,12 @@ class Decorator(Declaration):
         self._decorated_func = handler
         return functools.wraps(handler, updated=())(self)
 
-    def contribute_to_class(self, cls):
-        setattr(cls, self.name, self._decorated_func)
+    def on_class_create(self, cls):
+        pass
 
 class BasicConsumer(Decorator):
-    def __init__(self, serializers=None, auto_ack=False, **kwargs):
+    def __init__(self, queue='', serializers=None, auto_ack=False, **kwargs):
+        self.queue = queue
         self.serializers = serializers or Serializers()
         self.auto_ack = auto_ack
         if self.auto_ack:
@@ -152,49 +153,63 @@ class BasicConsumer(Decorator):
                 raise ValueError(msg)
         super(BasicConsumer, self).__init__(**kwargs)
 
+    def on_class_create(self, cls):
+        setattr(cls, self.name, self._decorated_func)
+
     def declare(self, channel):
-        queue = self.kwargs.setdefault('queue', '')
+        queue = self.queue
         if isinstance(queue, Queue):
-            queue = self.kwargs['queue'] = queue.queue_name
+            queue = queue.queue_name
         print "declaring consumer %r on queue %r" % (self.name, queue)
-        def handler(channel, method, props, body):
-            if self.serializers:
-                body = self.serializers.deserialize(props, body)
-            try:
-                self._decorated_func(channel, method, props, body)
-            except Exception, e:
-                print e
-            else:
-                if self.auto_ack:
-                    channel.basic_ack(delivery_tag=method.delivery_tag)
-        channel.basic_consume(handler, **self.kwargs)
+        channel.basic_consume(self.handler, queue=queue, **self.kwargs)
+
+    def handler(self, channel, method, props, body):
+        if self.serializers:
+            body = self.serializers.deserialize(props, body)
+        try:
+            self._decorated_func(self.client, channel, method, props, body)
+        except Exception, e:
+            print e
+        else:
+            if self.auto_ack:
+                channel.basic_ack(delivery_tag=method.delivery_tag)
 
     def add_serializer(self, serializer):
         self.serializers.append(serializer)
 
 class BasicPublisher(Decorator):
     def __init__(self, exchange='', routing_key='', serializer=None, properties=None, **kwargs):
+        """
+        Store the arguments as attributes.
+        Preserve the class attributes, which are decorators
+        that will allow us to update the publisher parameters.
+        """
         self.args = {'exchange': exchange,
                      'routing_key': routing_key,
                      'serializer': serializer,
                      'properties': properties}
         self.kwargs = kwargs
 
-    def contribute_to_class(self, cls):
-        func = self._decorated_func
+    def on_class_create(self, cls):
+        """
+        Now apply args we got when created, but don't overwrite
+        changes that might have been made in class body
+        (i.e. with decorators below)
+        """
         for key, value in self.args.iteritems():
             self.__dict__.setdefault(key, value)
         if isinstance(self.serializer, type):
             self.serializer = self.serializer()
 
-        @functools.wraps(func)
+    def __get__(self, instance, cls):
+        @functools.wraps(self._decorated_func)
         def publish_wrapper(client, *args, **kwargs):
-            result = func(client, *args, **kwargs)
+            result = self._decorated_func(client, *args, **kwargs)
             if not isinstance(result, types.GeneratorType):
                 result = (result,)
             for message in result:
                 self.publish(client, message)
-        setattr(cls, self.name, publish_wrapper)
+        return publish_wrapper.__get__(instance, cls)
 
     def publish(self, client, message):
         exchange = self.exchange
@@ -221,25 +236,25 @@ class BasicPublisher(Decorator):
 
     # decorators
     def serializer(self, obj):
-        self.serializer = obj
+        self.args['serializer'] = obj
         return obj
 
     def properties(self, func):
-        self.properties = func
+        self.args['properties'] = func
         return func
 
     def exchange(self, func):
-        self.exchange = func
+        self.args['exchange'] = func
         return func
 
     def routing_key(self, func):
-        self.routing_key = func
+        self.args['routing_key'] = func
         return func
 
 class Task(object):
     error_msg = "Specifying both timeout and interval for task is not allowed"
     def __init__(self, func, timeout=None, interval=None, **kwargs):
-        self.func = func
+        self._decorated_func = func
         self.kwargs = kwargs
         self.timeout = timeout
         self.interval = interval
@@ -249,7 +264,7 @@ class Task(object):
             self.timeout = 0
 
     def __get__(self, instance, cls):
-        @functools.wraps(self.func)
+        @functools.wraps(self._decorated_func)
         def schedule(client, *args, **kwargs):
             kwargs_ = copy.copy(self.kwargs)
             kwargs_.update(kwargs)
@@ -259,11 +274,11 @@ class Task(object):
                 raise ValueError(self.error_msg)
             if timeout is not None:
                 def task_func():
-                    self.func(client, *args, **kwargs_)
+                    self._decorated_func(client, *args, **kwargs_)
                 client.add_timeout(timeout, task_func)
             else:
                 def task_func():
-                    self.func(client, *args, **kwargs_)
+                    self._decorated_func(client, *args, **kwargs_)
                     client.add_timeout(interval, task_func)
                 client.add_timeout(interval, task_func)
         return schedule.__get__(instance, cls)
