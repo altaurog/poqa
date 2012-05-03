@@ -80,13 +80,19 @@ class AsyncClient(object):
         self._start_tasks()
 
     def _start_tasks(self):
+        for deadline, handler in self._get_pending_timeouts():
+            self.connection.add_timeout(deadline, handler)
+
+    def _get_pending_timeouts(self):
         # if there's a run function which isn't already a task, queue it
         class_run = getattr(self.__class__, 'run', None)
         self_run = getattr(self, 'run', None)
         if callable(self_run) and not isinstance(class_run, Task):
             self.add_timeout(0, self.run)
-        for deadline, handler in getattr(self, '_pending_timeouts', []):
-            self.connection.add_timeout(deadline, handler)
+        for name, attr in self.__class__.__dict__.iteritems():
+            if isinstance(attr, Task) and attr.auto:
+                getattr(self, name)()
+        return getattr(self, '_pending_timeouts', [])
 
     def start(self, host='127.0.0.1'):
         connection_params = ConnectionParameters(host)

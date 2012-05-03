@@ -252,11 +252,12 @@ class BasicPublisher(Decorator):
         return func
 
 class Task(object):
-    def __init__(self, func, timeout=None, interval=None, **kwargs):
+    def __init__(self, func, timeout=None, interval=None, auto=False, **kwargs):
         self._decorated_func = func
         self.kwargs = kwargs
         self.timeout = timeout
         self.interval = interval
+        self.auto = auto
         if timeout is None:
             self.timeout = interval or 0
 
