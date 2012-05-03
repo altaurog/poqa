@@ -132,6 +132,8 @@ class Exchange(Declaration):
 
 
 class Decorator(Declaration):
+    _decorated_func = None
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
@@ -202,6 +204,8 @@ class BasicPublisher(Decorator):
             self.serializer = self.serializer()
 
     def __get__(self, instance, cls):
+        if self._decorated_func is None:
+            return functools.partial(self.publish, instance)
         @functools.wraps(self._decorated_func)
         def publish_wrapper(client, *args, **kwargs):
             result = self._decorated_func(client, *args, **kwargs)
