@@ -71,7 +71,7 @@ class AsyncClient(object):
             self._declare_consumers()
         else:
             declaration.client = weakref.proxy(self)
-            declaration.declare(self._declare_topology)
+            declaration.declare_topology(self._declare_topology)
 
     def _declare_consumers(self):
         for c in self._consumers:

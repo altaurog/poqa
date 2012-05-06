@@ -15,6 +15,10 @@ class Queue(Declaration):
         self.kwargs = kwargs
         self._bindings = []
 
+    def declare_topology(self, callback):
+        self.client_callback = callback
+        self.declare(self.on_declare)
+
     def declare(self, callback):
         if not self.name.endswith('_'):
             name = self.kwargs.setdefault('queue', self.name)
@@ -27,9 +31,8 @@ class Queue(Declaration):
             print "declaring temorary queue for %s" % self.name
             self.kwargs.setdefault('exclusive', True)
         
-        self.client_callback = callback
         channel = self.client.channel
-        channel.queue_declare(callback=self.on_declare, **self.kwargs)
+        channel.queue_declare(callback=callback, **self.kwargs)
 
     def on_declare(self, frame):
         if frame.method.NAME != 'Queue.DeclareOk':
@@ -95,15 +98,18 @@ class Exchange(Declaration):
         super(Exchange, self).__init__()
         self.kwargs = kwargs
 
+    def declare_topology(self, callback):
+        self.client_callback = callback
+        self.declare(self.on_declare)
+
     def declare(self, callback):
         if not self.name.endswith('_'):
             name = self.kwargs.setdefault('exchange', self.name)
         else:
             name = self.kwargs.get('exchange')
         print "declaring exchange '%s'" % name
-        self.callback = callback
         channel = self.client.channel
-        channel.exchange_declare(callback=self.on_declare, **self.kwargs)
+        channel.exchange_declare(callback=callback, **self.kwargs)
 
     def on_declare(self, frame):
         if frame.method.NAME != 'Exchange.DeclareOk':
