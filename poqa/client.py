@@ -94,6 +94,9 @@ class AsyncClient(object):
                 getattr(self, name)()
         return getattr(self, '_pending_timeouts', [])
 
+    def stop(self):
+        self.connection.ioloop.stop()
+
     def start(self, host='127.0.0.1'):
         connection_params = ConnectionParameters(host)
         self.connection = SelectConnection(connection_params, self._on_connected)
