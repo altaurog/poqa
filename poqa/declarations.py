@@ -2,8 +2,6 @@ import copy
 import functools
 import types
 
-from pika import spec
-
 from .serializers import Serializers
 
 class Declaration(object):
@@ -15,11 +13,7 @@ class Queue(Declaration):
         self.kwargs = kwargs
         self._bindings = []
 
-    def declare_topology(self, callback):
-        self.client_callback = callback
-        self.declare(self.on_declare)
-
-    def declare(self, callback):
+    def declare(self):
         if not self.name.endswith('_'):
             name = self.kwargs.setdefault('queue', self.name)
         else:
@@ -31,110 +25,77 @@ class Queue(Declaration):
             print "declaring temorary queue for %s" % self.name
             self.kwargs.setdefault('exclusive', True)
         
-        channel = self.client.channel
-        channel.queue_declare(callback=callback, **self.kwargs)
+        channel = self.client().channel
+        channel.queue.declare(cb=self.on_declare, **self.kwargs)
 
-    def on_declare(self, frame):
-        if frame.method.NAME != 'Queue.DeclareOk':
-            raise RuntimeError('failed to declare queue: %r' % self.name)
-        self.queue_name = frame.method.queue
-        self.declare_bindings(None)
-
-    def declare_bindings(self, frame):
-        if frame is not None and frame.method.NAME != 'Queue.BindOk':
-            raise RuntimeError('failed to bind queue %s' % self.queue_name)
-
-        try:
-            bindings_iter = self._bindings_iter
-        except AttributeError:
-            bindings_iter = iter(self._bindings)
-            self._bindings_iter = bindings_iter
-
-        try:
-            exchange, kwargs = bindings_iter.next()
-        except StopIteration:
-            self.client_callback()
-        else:
-            channel = self.client.channel
-            if isinstance(exchange, Exchange):
-                exchange = exchange.exchange_name
-            channel.queue_bind(callback=self.declare_bindings,
-                                queue=self.queue_name,
-                                exchange=exchange,
-                                **kwargs)
+    def on_declare(self, queue, *args):
+        self.queue_name = queue
+        for exchange, kwargs in self._bindings:
+            self.bind(exchange, **kwargs)
 
     def bind(self, exchange, **kwargs):
-        self._bindings.append((exchange, kwargs))
+        channel = self.client().channel
+        queue_name = getattr(self, 'queue_name', False)
+        if queue_name:
+            if isinstance(exchange, Exchange):
+                exchange = exchange.exchange_name
+            channel.queue.bind( queue=self.queue_name,
+                                exchange=exchange,
+                                **kwargs)
+        else:
+            self._bindings.append((exchange, kwargs))
 
-    def basic_consumer(self, consumer_callback=None, **kwargs):
+    def consumer(self, consumer_callback=None, **kwargs):
         kwargs['queue'] = self
-        decorator = BasicConsumer(**kwargs)
+        decorator = Consumer(**kwargs)
         if callable(consumer_callback) and kwargs.keys() == ['queue']:
             return decorator(consumer_callback)
         else:
             return decorator
 
-    def basic_publisher(self, publisher_func=None, **kwargs):
+    def publisher(self, publisher_func=None, **kwargs):
         is_empty_kwargs = not len(kwargs)
         kwargs['routing_key'] = self
-        decorator = BasicPublisher(**kwargs)
+        decorator = Publisher(**kwargs)
         if callable(publisher_func) and is_empty_kwargs:
             return decorator(publisher_func)
         else:
             return decorator
 
-    def basic_publish(self, body, serializer=None, properties=None, **kwargs):
-        channel = self.client.channel
+    def publish(self, message, serializer=None, **kwargs):
+        channel = self.client().channel
         exchange = ''
         routing_key = self.queue_name
         if serializer:
-            if properties is None:
-                properties = spec.BasicProperties()
-            body = serializer.serialize(body, properties)
-        channel.basic_publish(exchange, routing_key, body, **kwargs)
+            serializer.serialize(message)
+        channel.basic.publish(message, exchange, routing_key, **kwargs)
 
 class Exchange(Declaration):
     def __init__(self, **kwargs):
         super(Exchange, self).__init__()
         self.kwargs = kwargs
 
-    def declare_topology(self, callback):
-        self.client_callback = callback
-        self.declare(self.on_declare)
+    def declare(self):
+        self.exchange_name = self.kwargs.setdefault('exchange', self.name)
+        print "declaring exchange '%s'" % self.exchange_name
+        channel = self.client().channel
+        channel.exchange.declare(**self.kwargs)
 
-    def declare(self, callback):
-        if not self.name.endswith('_'):
-            name = self.kwargs.setdefault('exchange', self.name)
-        else:
-            name = self.kwargs.get('exchange')
-        print "declaring exchange '%s'" % name
-        channel = self.client.channel
-        channel.exchange_declare(callback=callback, **self.kwargs)
-
-    def on_declare(self, frame):
-        if frame.method.NAME != 'Exchange.DeclareOk':
-            raise RuntimeError('failed to declare exchange: %r' % self.name)
-        self.exchange_name = self.name
-        self.callback()
-
-    def basic_publisher(self, publisher_func=None, **kwargs):
+    def publisher(self, publisher_func=None, **kwargs):
         is_empty_kwargs = not len(kwargs)
         kwargs['exchange'] = self
-        decorator = BasicPublisher(**kwargs)
+        decorator = Publisher(**kwargs)
         if callable(publisher_func) and is_empty_kwargs:
             return decorator(publisher_func)
         else:
             return decorator
 
-    def basic_publish(self, body, routing_key='', serializer=None,
-                                   properties=None, **kwargs):
-        channel = self.client.channel
+    def publish(self, message, routing_key='', serializer=None, **kwargs):
+        channel = self.client().channel
         exchange = self.exchange_name
         if serializer:
-            if properties is None:
-                properties = spec.BasicProperties()
-            body = serializer.serialize(body, properties)
-        channel.basic_publish(exchange, routing_key, body, **kwargs)
+            serializer.serialize(message)
+        channel.basic.publish(message, exchange, routing_key, **kwargs)
 
 
 class Decorator(Declaration):
@@ -150,7 +111,8 @@ class Decorator(Declaration):
     def on_class_create(self, cls):
         pass
 
-class BasicConsumer(Decorator):
+
+class Consumer(Decorator):
     def __init__(self, queue='', serializers=None, auto_ack=False, **kwargs):
         self.queue = queue
         self.serializers = serializers or Serializers()
@@ -159,33 +121,36 @@ class BasicConsumer(Decorator):
             if kwargs.get('no_ack', False):
                 msg = "A consumer may not have both auto_ack and no_ack set."
                 raise ValueError(msg)
-        super(BasicConsumer, self).__init__(**kwargs)
+        super(Consumer, self).__init__(**kwargs)
 
     def on_class_create(self, cls):
         setattr(cls, self.name, self._decorated_func)
 
-    def declare(self, channel):
+    def declare(self):
+        channel = self.client().channel
         queue = self.queue
         if isinstance(queue, Queue):
             queue = queue.queue_name
         print "declaring consumer %r on queue %r" % (self.name, queue)
-        channel.basic_consume(self.handler, queue=queue, **self.kwargs)
+        channel.basic.consume(self.handler, queue=queue, **self.kwargs)
 
-    def handler(self, channel, method, props, body):
+    def handler(self, message):
         if self.serializers:
-            body = self.serializers.deserialize(props, body)
+             self.serializers.deserialize(message)
         try:
-            self._decorated_func(self.client, channel, method, props, body)
+            self._decorated_func(self.client(), message)
         except Exception, e:
             print e
         else:
             if self.auto_ack:
-                channel.basic_ack(delivery_tag=method.delivery_tag)
+                channel = message.delivery_info['channel']
+                delivery_tag = message.delivery_info['delivery_tag']
+                channel.basic.ack(delivery_tag)
 
     def add_serializer(self, serializer):
         self.serializers.append(serializer)
 
-class BasicPublisher(Decorator):
+class Publisher(Decorator):
     def __init__(self, exchange='', routing_key='', serializer=None, properties=None, **kwargs):
         """
         Store the arguments as attributes.
@@ -234,24 +199,14 @@ class BasicPublisher(Decorator):
         if isinstance(routing_key, Queue):
             routing_key = routing_key.queue_name
 
-        properties = self.properties
-        if callable(properties):
-            properties = properties(client, message)
-        if properties is None:
-            properties = spec.BasicProperties()
-
         if self.serializer:
-            message = self.serializer.serialize(message, properties)
-        client.channel.basic_publish(exchange, routing_key, message, properties, **self.kwargs)
+            self.serializer.serialize(message)
+        client.channel.basic.publish(message, exchange, routing_key, **self.kwargs)
 
     # decorators
     def serializer(self, obj):
         self.args['serializer'] = obj
         return obj
-
-    def properties(self, func):
-        self.args['properties'] = func
-        return func
 
     def exchange(self, func):
         self.args['exchange'] = func
@@ -262,31 +217,25 @@ class BasicPublisher(Decorator):
         return func
 
 class Task(object):
-    def __init__(self, func, timeout=None, interval=None, auto=False, **kwargs):
+    def __init__(self, func, delay=None, interval=None, auto=False, **kwargs):
         self._decorated_func = func
         self.kwargs = kwargs
-        self.timeout = timeout
+        self.delay = delay
         self.interval = interval
         self.auto = auto
-        if timeout is None:
-            self.timeout = interval or 0
+        if delay is None:
+            self.delay = interval or 0
 
     def __get__(self, instance, cls):
         @functools.wraps(self._decorated_func)
         def schedule(client, *args, **kwargs):
             kwargs_ = copy.copy(self.kwargs)
             kwargs_.update(kwargs)
-            timeout = kwargs_.pop('timeout', self.timeout)
+            delay = kwargs_.pop('delay', self.delay)
             interval = kwargs_.pop('interval', self.interval)
-            if interval is None:
-                def task_func():
-                    self._decorated_func(client, *args, **kwargs_)
-                client.add_timeout(timeout, task_func)
-            else:
-                def task_func():
-                    self._decorated_func(client, *args, **kwargs_)
-                    client.add_timeout(interval, task_func)
-                client.add_timeout(timeout, task_func)
+            def task_func():
+                self._decorated_func(client, *args, **kwargs_)
+            client.insert_task(task_func, delay, interval)
         return schedule.__get__(instance, cls)
 
 def task(func=None, **kwargs):
