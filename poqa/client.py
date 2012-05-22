@@ -7,10 +7,10 @@ import itertools
 import weakref
 
 from haigha.connection import Connection
-from haigha.message import Message
 
 from .declarations import *
-from .taskloop import TaskLoop
+from .taskloop import *
+from .serializers import Message
 
 class ClientMeta(type):
     def __new__(cls, name, bases, attrs):
@@ -64,7 +64,7 @@ class AsyncClient(object):
         class_run = getattr(self.__class__, 'run', None)
         self_run = getattr(self, 'run', None)
         if callable(self_run) and not isinstance(class_run, Task):
-            self.add_timeout(0, self.run)
+            self.insert_task(self.run, 0)
 
         # start 'auto' tasks
         for name, attr in self.__class__.__dict__.iteritems():
@@ -77,6 +77,9 @@ class AsyncClient(object):
             self.insert_task(task, *args, **kwargs)
 
         self.loop.start()
+
+    def stop(self):
+        self.connection.close()
 
     def insert_task(self, task, *args, **kwargs):
         loop = getattr(self, 'loop', None)

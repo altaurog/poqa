@@ -53,7 +53,7 @@ class YamlSerializer(SerializerBase):
 
     def loads(self, yaml_str):
         try:
-            py_obj = yaml.load(yaml_str)
+            py_obj = yaml.load(str(yaml_str))
         except yaml.YAMLError, e:
             raise SerializationError(e)
 

@@ -1,8 +1,29 @@
-import copy
 import functools
 import types
 
-from .serializers import Serializers
+import haigha.message
+
+from .serializers import Message, Serializers
+
+__all__ = [
+            "Declaration",
+            "Queue",
+            "Exchange",
+            "Decorator",
+            "Consumer",
+            "Publisher",
+]
+
+def publish(channel, message, exchange, routing_key, serializer, **kwargs):
+    if serializer:
+        if not isinstance(message, (Message, haigha.message.Message)):
+            message = Message(message)
+        message = serializer.serialize(message)
+    else:
+        if not isinstance(message, haigha.message.Message):
+            message = haigha.message.Message(message)
+    channel.basic.publish(message, exchange, routing_key, **kwargs)
+
 
 class Declaration(object):
     "Base class for declarative style"
@@ -54,10 +75,8 @@ class Queue(Declaration):
             return decorator
 
     def publisher(self, publisher_func=None, **kwargs):
-        is_empty_kwargs = not len(kwargs)
-        kwargs['routing_key'] = self
-        decorator = Publisher(**kwargs)
-        if callable(publisher_func) and is_empty_kwargs:
+        decorator = Publisher(self, **kwargs)
+        if callable(publisher_func) and len(kwargs) == 0:
             return decorator(publisher_func)
         else:
             return decorator
@@ -66,9 +85,7 @@ class Queue(Declaration):
         channel = self.client().channel
         exchange = ''
         routing_key = self.queue_name
-        if serializer:
-            serializer.serialize(message)
-        channel.basic.publish(message, exchange, routing_key, **kwargs)
+        publish(channel, message, exchange, routing_key, serializer, **kwargs)
 
 class Exchange(Declaration):
     def __init__(self, **kwargs):
@@ -82,20 +99,17 @@ class Exchange(Declaration):
         channel.exchange.declare(**self.kwargs)
 
     def publisher(self, publisher_func=None, **kwargs):
-        is_empty_kwargs = not len(kwargs)
-        kwargs['exchange'] = self
-        decorator = Publisher(**kwargs)
-        if callable(publisher_func) and is_empty_kwargs:
+        decorator = Publisher(self, **kwargs)
+        if callable(publisher_func) and len(kwargs) == 0:
             return decorator(publisher_func)
         else:
             return decorator
 
-    def publish(self, message, routing_key='', serializer=None, **kwargs):
+    def publish(self, message, serializer=None, **kwargs):
         channel = self.client().channel
         exchange = self.exchange_name
-        if serializer:
-            serializer.serialize(message)
-        channel.basic.publish(message, exchange, routing_key, **kwargs)
+        routing_key = message.routing_key or ''
+        publish(channel, message, exchange, routing_key, serializer, **kwargs)
 
 
 class Decorator(Declaration):
@@ -132,11 +146,11 @@ class Consumer(Decorator):
         if isinstance(queue, Queue):
             queue = queue.queue_name
         print "declaring consumer %r on queue %r" % (self.name, queue)
-        channel.basic.consume(self.handler, queue=queue, **self.kwargs)
+        channel.basic.consume(queue=queue, consumer=self.handler, **self.kwargs)
 
     def handler(self, message):
         if self.serializers:
-             self.serializers.deserialize(message)
+             message = self.serializers.deserialize(message)
         try:
             self._decorated_func(self.client(), message)
         except Exception, e:
@@ -151,26 +165,13 @@ class Consumer(Decorator):
         self.serializers.append(serializer)
 
 class Publisher(Decorator):
-    def __init__(self, exchange='', routing_key='', serializer=None, properties=None, **kwargs):
-        """
-        Store the arguments as attributes.
-        Preserve the class attributes, which are decorators
-        that will allow us to update the publisher parameters.
-        """
-        self.args = {'exchange': exchange,
-                     'routing_key': routing_key,
-                     'serializer': serializer,
-                     'properties': properties}
+    def __init__(self, parent, serializer=None, **kwargs):
+        self.parent = parent
         self.kwargs = kwargs
+        if serializer:
+            self.serializer = serializer
 
     def on_class_create(self, cls):
-        """
-        Now apply args we got when created, but don't overwrite
-        changes that might have been made in class body
-        (i.e. with decorators below)
-        """
-        for key, value in self.args.iteritems():
-            self.__dict__.setdefault(key, value)
         if isinstance(self.serializer, type):
             self.serializer = self.serializer()
 
@@ -183,66 +184,6 @@ class Publisher(Decorator):
             if not isinstance(result, types.GeneratorType):
                 result = (result,)
             for message in result:
-                self.publish(client, message)
+                self.parent.publish(message, self.serializer, **self.kwargs)
         return publish_wrapper.__get__(instance, cls)
-
-    def publish(self, client, message):
-        exchange = self.exchange
-        if callable(exchange):
-            exchange = exchange(client, message)
-        if isinstance(exchange, Exchange):
-            exchange = exchange.exchange_name
-
-        routing_key = self.routing_key
-        if callable(routing_key):
-            routing_key = routing_key(client, message)
-        if isinstance(routing_key, Queue):
-            routing_key = routing_key.queue_name
-
-        if self.serializer:
-            self.serializer.serialize(message)
-        client.channel.basic.publish(message, exchange, routing_key, **self.kwargs)
-
-    # decorators
-    def serializer(self, obj):
-        self.args['serializer'] = obj
-        return obj
-
-    def exchange(self, func):
-        self.args['exchange'] = func
-        return func
-
-    def routing_key(self, func):
-        self.args['routing_key'] = func
-        return func
-
-class Task(object):
-    def __init__(self, func, delay=None, interval=None, auto=False, **kwargs):
-        self._decorated_func = func
-        self.kwargs = kwargs
-        self.delay = delay
-        self.interval = interval
-        self.auto = auto
-        if delay is None:
-            self.delay = interval or 0
-
-    def __get__(self, instance, cls):
-        @functools.wraps(self._decorated_func)
-        def schedule(client, *args, **kwargs):
-            kwargs_ = copy.copy(self.kwargs)
-            kwargs_.update(kwargs)
-            delay = kwargs_.pop('delay', self.delay)
-            interval = kwargs_.pop('interval', self.interval)
-            def task_func():
-                self._decorated_func(client, *args, **kwargs_)
-            client.insert_task(task_func, delay, interval)
-        return schedule.__get__(instance, cls)
-
-def task(func=None, **kwargs):
-    if callable(func) and kwargs == {}:
-        return Task(func)
-    else:
-        def decorator(func):
-            return Task(func, **kwargs)
-        return decorator
 

@@ -1,7 +1,15 @@
+import copy
+import functools
 import random
 import time
 
 random.seed()
+
+__all__ = [
+            "TaskLoop",
+            "Task",
+            "task",
+]
 
 class TaskLoop(object):
     timeout = 0.5
@@ -48,4 +56,34 @@ class TaskLoop(object):
     def getid(self):
         return random.getrandbits(32), time.time()
 
+
+class Task(object):
+    def __init__(self, func, delay=None, interval=None, auto=False, **kwargs):
+        self._decorated_func = func
+        self.kwargs = kwargs
+        self.delay = delay
+        self.interval = interval
+        self.auto = auto
+        if delay is None:
+            self.delay = interval or 0
+
+    def __get__(self, instance, cls):
+        @functools.wraps(self._decorated_func)
+        def schedule(client, *args, **kwargs):
+            kwargs_ = copy.copy(self.kwargs)
+            kwargs_.update(kwargs)
+            delay = kwargs_.pop('delay', self.delay)
+            interval = kwargs_.pop('interval', self.interval)
+            def task_func():
+                self._decorated_func(client, *args, **kwargs_)
+            client.insert_task(task_func, delay, interval)
+        return schedule.__get__(instance, cls)
+
+def task(func=None, **kwargs):
+    if callable(func) and kwargs == {}:
+        return Task(func)
+    else:
+        def decorator(func):
+            return Task(func, **kwargs)
+        return decorator
 
