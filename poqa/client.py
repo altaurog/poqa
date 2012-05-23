@@ -54,29 +54,31 @@ class AsyncClient(object):
     def start(self, **kwargs):
         self.connection = Connection(**kwargs)
         self.channel = self.connection.channel()
+        self.loop = TaskLoop()
+        self.insert_task(self.read_frames, interval=0.01)
+        self.insert_task(self.__run)
+        self.loop.start()
+
+    def __run(self):
         for declaration in itertools.chain(self._exchanges, self._queues, self._consumers):
             declaration.client = weakref.ref(self)
             declaration.declare()
-        self.loop = TaskLoop()
-        self.insert_task(self.read_frames, interval=0.1)
-
-        # if there's a run function which isn't already a task, queue it
-        class_run = getattr(self.__class__, 'run', None)
-        self_run = getattr(self, 'run', None)
-        if callable(self_run) and not isinstance(class_run, Task):
-            self.insert_task(self.run, 0)
 
         # start 'auto' tasks
         for name, attr in self.__class__.__dict__.iteritems():
             if isinstance(attr, Task) and attr.auto:
                 getattr(self, name)()
 
-        # I don't think this does anything
         for task, args, kwargs in self._tasks:
             print 'scheduling %s from _tasks' % task
             self.insert_task(task, *args, **kwargs)
 
-        self.loop.start()
+        # if there's a run function which isn't already a task, queue it
+        class_run = getattr(self.__class__, 'run', None)
+        self_run = getattr(self, 'run', None)
+        if callable(self_run) and not isinstance(class_run, Task):
+            self.run()
+            self.stop()
 
     def stop(self):
         self.connection.close()

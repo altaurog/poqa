@@ -50,6 +50,7 @@ class Queue(Declaration):
         channel.queue.declare(cb=self.on_declare, **self.kwargs)
 
     def on_declare(self, queue, *args):
+        print("On declare: %s", queue)
         self.queue_name = queue
         for exchange, kwargs in self._bindings:
             self.bind(exchange, **kwargs)
@@ -151,6 +152,9 @@ class Consumer(Decorator):
     def handler(self, message):
         if self.serializers:
              message = self.serializers.deserialize(message)
+        else:
+             message.payload = message.body
+
         try:
             self._decorated_func(self.client(), message)
         except Exception, e:
@@ -168,8 +172,7 @@ class Publisher(Decorator):
     def __init__(self, parent, serializer=None, **kwargs):
         self.parent = parent
         self.kwargs = kwargs
-        if serializer:
-            self.serializer = serializer
+        self.serializer = serializer
 
     def on_class_create(self, cls):
         if isinstance(self.serializer, type):

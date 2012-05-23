@@ -18,9 +18,12 @@ class TaskLoop(object):
         self.stopped = False
 
     def start(self):
-        while not self.stopped:
-            if not self.process_tasks():
-                time.sleep(self.timeout)
+        try:
+            while not self.stopped:
+                if not self.process_tasks():
+                    time.sleep(self.timeout)
+        except KeyboardInterrupt:
+            pass
 
     def stop(self):
         self.stopped = True

@@ -8,7 +8,6 @@ class HelloClient(client.AsyncClient):
     def run(self):
         print "sending hello"
         yield ['hello world', 2]
-        exit()
 
     run.serializer = YamlSerializer
 

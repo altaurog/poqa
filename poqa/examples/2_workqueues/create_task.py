@@ -1,21 +1,21 @@
+import random
+import sys
 from poqa import client
+
+random.seed()
 
 class TaskFactory(client.AsyncClient):
     task_queue = client.Queue(durable=True)
 
-    @task_queue.basic_publisher
+    @task_queue.publisher
     def run(self):
-        for i in range(6):
-            yield 'task'
+        if len(sys.argv) > 1:
+            messages = sys.argv[1:]
+        else:
+            messages = ['%0.2f' % random.random() for i in range(6)]
 
-    def on_queue_declare(self, frame):
-        print "queue consumers: %d" % frame.method.consumer_count
-        print "queue messages: %d" % frame.method.message_count
-
-    @client.task(interval=1, auto=True)
-    def check_queue(self):
-        self.task_queue.declare(callback=self.on_queue_declare)
-
+        for m in messages:
+            yield m
 
 if __name__ == "__main__":
     c = TaskFactory()
