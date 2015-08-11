@@ -1,0 +1,4 @@
+*.pyc
+*.egg
+*.egg-info
+distribute-*.tar.gz
